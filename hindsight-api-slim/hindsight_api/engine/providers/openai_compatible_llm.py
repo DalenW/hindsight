@@ -32,7 +32,10 @@ from typing import Any, Callable, Literal
 from urllib.parse import parse_qs, urlparse, urlunparse
 
 import aiohttp
-from openai import APIConnectionError, APIStatusError, AsyncOpenAI, LengthFinishReasonError
+import httpx  # noqa: TID251 -- classifies the OpenAI SDK's transport errors mid-stream
+from openai import APIConnectionError, APIError, APIStatusError, AsyncOpenAI, LengthFinishReasonError
+from openai.lib.streaming.chat import ChatCompletionStreamState
+from openai.types.chat import ChatCompletion
 
 from hindsight_api.config import get_config
 from hindsight_api.engine.aiohttp_session import LoopLocalSession, UpstreamHTTPError, raise_for_status
@@ -902,6 +905,7 @@ class OpenAICompatibleLLM(LLMInterface):
         default_headers: dict[str, str] | None = None,
         cache_affinity: str | None = None,
         ollama_num_ctx: int | None = None,
+        stream: bool = False,
         **kwargs: Any,
     ):
         """
@@ -926,6 +930,10 @@ class OpenAICompatibleLLM(LLMInterface):
                 from the provider + base-URL host). See ``engine/cache_affinity.py``.
             ollama_num_ctx: Native Ollama context window override. None lets Ollama use
                 the model/server default.
+            stream: Send chat completions with ``stream: true`` and reassemble the chunks
+                into one response. Only the transport changes: callers get the same
+                result, and ``timeout`` still caps the whole call. The native Ollama
+                path is unaffected.
             **kwargs: Additional provider-specific parameters.
         """
         super().__init__(provider, api_key, base_url, model, reasoning_effort, **kwargs)
@@ -1018,6 +1026,7 @@ class OpenAICompatibleLLM(LLMInterface):
         self.ollama_num_ctx = _validate_ollama_num_ctx(ollama_num_ctx)
         # User-configured extra body params (merged into every API call)
         self._config_extra_body = extra_body or {}
+        self._stream = stream
 
         # Get timeout config
         self.timeout = timeout or get_config().llm_timeout
@@ -1415,7 +1424,7 @@ class OpenAICompatibleLLM(LLMInterface):
                         # on every byte, so an upstream trickling keep-alive whitespace never trips it
                         # and the call pins its worker slot forever (#4763).
                         response = await asyncio.wait_for(
-                            self._request_client().chat.completions.create(**call_params), timeout=self.timeout
+                            self._create_chat_completion(call_params), timeout=self.timeout
                         )
                     # Stash usage before parse/validate, which may raise locally
                     # even though the provider charged for these tokens (#2387).
@@ -1497,7 +1506,7 @@ class OpenAICompatibleLLM(LLMInterface):
                     async with attempt_context() if attempt_context is not None else nullcontext():
                         set_stage(f"llm.{self.provider}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
                         response = await asyncio.wait_for(
-                            self._request_client().chat.completions.create(**call_params), timeout=self.timeout
+                            self._create_chat_completion(call_params), timeout=self.timeout
                         )
                     stash_response_usage(_usage_from_openai_response(response))
                     result, first_choice = _content_or_error(
@@ -1856,9 +1865,7 @@ class OpenAICompatibleLLM(LLMInterface):
             try:
                 async with attempt_context() if attempt_context is not None else nullcontext():
                     set_stage(f"llm.{self.provider}.tools.attempt={attempt + 1}/{attempts_allowed}")
-                    response = await asyncio.wait_for(
-                        self._request_client().chat.completions.create(**call_params), timeout=self.timeout
-                    )
+                    response = await asyncio.wait_for(self._create_chat_completion(call_params), timeout=self.timeout)
                     stash_response_usage(_usage_from_openai_response(response))
 
                 choice = _first_choice_or_error(response, provider=self.provider, model=self.model, scope=scope)
@@ -2506,6 +2513,50 @@ class OpenAICompatibleLLM(LLMInterface):
         from hindsight_api.extensions.llm_request import request_client
 
         return request_client(self._client)
+
+    async def _create_chat_completion(self, call_params: dict[str, Any]) -> ChatCompletion:
+        """One chat completion, streamed and reassembled when this provider streams.
+
+        Some gateways drop a request that sends nothing back for minutes, which is what
+        a long background generation does when it is not streamed. Streaming keeps bytes
+        flowing; the chunks are folded back into one ``ChatCompletion``, so callers read
+        the result exactly as they read an unstreamed one.
+        """
+        client = self._request_client()
+        if not self._stream:
+            return await client.chat.completions.create(**call_params)
+
+        stream = await client.chat.completions.create(
+            **call_params, stream=True, stream_options={"include_usage": True}
+        )
+        state = ChatCompletionStreamState()
+        usage = None
+        received = False
+        async with stream:
+            try:
+                async for chunk in stream:
+                    state.handle_chunk(chunk)
+                    received = True
+                    # Usage arrives on its own final chunk; the accumulator overwrites
+                    # it with every chunk, so keep the last one that carried any.
+                    usage = chunk.usage or usage
+            except httpx.TransportError as e:
+                # The SDK wraps transport failures only while sending the request. A
+                # connection lost mid-stream would otherwise skip the retry loop.
+                raise APIConnectionError(request=stream.response.request) from e
+            except APIError as e:
+                if isinstance(e, APIStatusError):
+                    raise
+                # An error event inside the stream: the upstream failed after the 200.
+                # Unstreamed, the same failure is a 5xx, which is retried.
+                raise ProviderResponseError(
+                    f"Provider failed mid-stream ({self.provider}/{self.model}): {e.message}"
+                ) from e
+        if not received:
+            raise ProviderResponseError(f"Provider stream ended without any chunk ({self.provider}/{self.model})")
+        completion = state.current_completion_snapshot
+        completion.usage = usage
+        return completion
 
     def supports_attempt_scoped_concurrency(self) -> bool:
         return True

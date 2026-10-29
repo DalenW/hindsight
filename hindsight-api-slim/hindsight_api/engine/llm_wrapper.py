@@ -462,6 +462,26 @@ def _validate_ollama_num_ctx(value: Any) -> int | None:
     return value
 
 
+# The providers served by ``OpenAICompatibleLLM``, the only one that can stream its
+# requests (see ``create_llm_provider``'s ``stream``).
+_STREAMING_PROVIDERS = (
+    "openai",
+    "groq",
+    "ollama",
+    "ollama-cloud",
+    "lmstudio",
+    "minimax",
+    "deepseek",
+    "volcano",
+    "openrouter",
+    "requesty",
+    "zai",
+    "opencode-go",
+    "atlas",
+    "meta",
+)
+
+
 def create_llm_provider(
     provider: str,
     api_key: str,
@@ -489,6 +509,7 @@ def create_llm_provider(
     # tests/test_llm_wrapper.py), so a parameter added mid-list silently steals
     # another one's slot. New parameters go at the end.
     codex_home: str | None = None,
+    stream: bool = False,
 ) -> Any:  # Returns LLMInterface
     """
     Factory function to create the appropriate LLM provider implementation.
@@ -539,6 +560,9 @@ def create_llm_provider(
             Anthropic and Gemini keep their provider-specific defaults).
         codex_home: Codex credentials directory (for the openai-codex provider); overrides
             the process-wide ``CODEX_HOME``.
+        stream: Send chat completions streamed and reassemble them into one response.
+            Honoured by the ``OpenAICompatibleLLM`` branch only; any other provider logs a
+            warning and sends its requests unstreamed.
 
     Returns:
         LLMInterface implementation for the specified provider.
@@ -549,6 +573,10 @@ def create_llm_provider(
     from . import providers
 
     provider_lower = provider.lower()
+    if stream and provider_lower not in _STREAMING_PROVIDERS:
+        # Never drop a configured value silently: the operator set it for a reason, and
+        # nothing in the response would show it was ignored.
+        logger.warning(f"Streamed LLM requests are not supported for provider '{provider}'; sending them unstreamed")
     if provider_lower == "gemini":
         from ..config import parse_gemini_service_tier
 
@@ -798,22 +826,7 @@ def create_llm_provider(
             timeout=timeout,
         )
 
-    elif provider_lower in (
-        "openai",
-        "groq",
-        "ollama",
-        "ollama-cloud",
-        "lmstudio",
-        "minimax",
-        "deepseek",
-        "volcano",
-        "openrouter",
-        "requesty",
-        "zai",
-        "opencode-go",
-        "atlas",
-        "meta",
-    ):
+    elif provider_lower in _STREAMING_PROVIDERS:
         return providers.OpenAICompatibleLLM(
             provider=provider,
             api_key=api_key,
@@ -827,6 +840,7 @@ def create_llm_provider(
             cache_affinity=cache_affinity,
             ollama_num_ctx=ollama_num_ctx,
             timeout=timeout,
+            stream=stream,
         )
 
     else:
@@ -870,6 +884,7 @@ class LLMProvider:
         # callers that pass these positionally would otherwise have one argument
         # land in the wrong slot.
         codex_home: str | None = None,
+        stream: bool = False,
     ):
         """
         Initialize LLM provider.
@@ -925,6 +940,10 @@ class LLMProvider:
                 uses the process-wide ``CODEX_HOME`` (else ``~/.codex``). Set it per member of a
                 multi-LLM chain to run two independently authorized ChatGPT profiles, so that
                 failover away from a rate-limited profile actually reaches a different account.
+            stream: Send chat completions streamed and reassemble them into one response.
+                Resolved by the caller from the per-operation config
+                (``consolidation_llm_stream``, ``mental_model_refresh_llm_stream``).
+                OpenAI-compatible providers only; see ``create_llm_provider``.
 
         This constructor uses every argument as passed and does not read global
         ``HindsightConfig``: resolving the server-level default for a ``None`` argument is the
@@ -951,6 +970,7 @@ class LLMProvider:
         # Codex credentials directory (openai-codex only). Used verbatim — the caller
         # resolves the server-level default, like the fields around it.
         self.codex_home = codex_home
+        self.stream = stream
         # Service tiers from hierarchical config (not env vars)
         self.groq_service_tier = groq_service_tier
         self.openai_service_tier = openai_service_tier
@@ -1125,6 +1145,7 @@ class LLMProvider:
                 timeout=self.timeout,
                 cache_affinity=self.cache_affinity,
                 structured_output_forced_tool=self.structured_output_forced_tool,
+                stream=self.stream,
             )
         except ProviderUnavailableError as e:
             from .providers.none_llm import UnavailableLLM

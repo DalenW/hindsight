@@ -294,6 +294,7 @@ def _llm_for(overrides: LLMRequestOverrides, caller: LLMProvider) -> LLMProvider
         max_retries=caller.max_retries,
         initial_backoff=caller.initial_backoff,
         max_backoff=caller.max_backoff,
+        stream=caller.stream,
     )
     # Hashed so the cache's keys are not a second copy of every credential in memory.
     identity = json.dumps(

@@ -785,6 +785,7 @@ Different memory operations have different requirements. **Retain** (fact extrac
 | `HINDSIGHT_API_CONSOLIDATION_LLM_REASONING_EFFORT` | Reasoning effort for consolidation operations | Falls back to `HINDSIGHT_API_LLM_REASONING_EFFORT` |
 | `HINDSIGHT_API_CONSOLIDATION_LLM_EXTRA_BODY` | Extra request-body params (JSON dict) for consolidation operations | Falls back to `HINDSIGHT_API_LLM_EXTRA_BODY` |
 | `HINDSIGHT_API_CONSOLIDATION_LLM_CACHE_AFFINITY` | Prompt-cache affinity mode for consolidation operations | Falls back to `HINDSIGHT_API_LLM_CACHE_AFFINITY` |
+| `HINDSIGHT_API_CONSOLIDATION_LLM_STREAM` | Send consolidation requests streamed (`stream: true`) and reassemble the chunks into one response. For gateways that drop a long request that sends nothing back while the model generates. OpenAI-compatible providers only; other providers log a warning and ignore it. The timeout still caps the whole call, so raise `HINDSIGHT_API_CONSOLIDATION_LLM_TIMEOUT` for slow models. | `false` |
 | `HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_PROVIDER` | LLM provider for the automatic mental-model refresh | Falls back to `HINDSIGHT_API_REFLECT_LLM_PROVIDER` |
 | `HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_API_KEY` | API key for the refresh LLM | Falls back to `HINDSIGHT_API_REFLECT_LLM_API_KEY` |
 | `HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL` | Model for the automatic refresh | Falls back to `HINDSIGHT_API_REFLECT_LLM_MODEL` |
@@ -797,6 +798,7 @@ Different memory operations have different requirements. **Retain** (fact extrac
 | `HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_REASONING_EFFORT` | Reasoning effort for the automatic refresh | Falls back to `HINDSIGHT_API_REFLECT_LLM_REASONING_EFFORT` |
 | `HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_EXTRA_BODY` | Extra request-body params (JSON dict) for the refresh | Falls back to `HINDSIGHT_API_REFLECT_LLM_EXTRA_BODY` |
 | `HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_CACHE_AFFINITY` | Prompt-cache affinity mode for the refresh | Falls back to `HINDSIGHT_API_REFLECT_LLM_CACHE_AFFINITY` |
+| `HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_STREAM` | Send refresh requests streamed, as `HINDSIGHT_API_CONSOLIDATION_LLM_STREAM` does for consolidation. Interactive reflect is never streamed. | `false` |
 
 **Automatic mental-model refresh.** The background refresh that runs after consolidation
 drives the same agent as interactive reflect, so by default it uses the reflect LLM and

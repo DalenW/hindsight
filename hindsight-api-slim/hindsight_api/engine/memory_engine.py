@@ -810,6 +810,9 @@ class _LLMCallDefaults:
     max_retries: int | None
     initial_backoff: float | None
     max_backoff: float | None
+    # Only consolidation and mental-model refresh can turn this on; it has no
+    # global fallback, so ``_op_defaults`` leaves it off and they set it themselves.
+    stream: bool = False
 
     def as_kwargs(self) -> dict[str, Any]:
         return {
@@ -817,6 +820,7 @@ class _LLMCallDefaults:
             "max_retries": self.max_retries,
             "initial_backoff": self.initial_backoff,
             "max_backoff": self.max_backoff,
+            "stream": self.stream,
         }
 
 
@@ -3008,7 +3012,9 @@ class MemoryEngine(MemoryEngineInterface):
         default_call_defaults = _op_defaults("")
         retain_call_defaults = _op_defaults("retain_")
         reflect_call_defaults = _op_defaults("reflect_")
-        consolidation_call_defaults = _op_defaults("consolidation_")
+        consolidation_call_defaults = replace(
+            _op_defaults("consolidation_"), stream=bool(config.consolidation_llm_stream)
+        )
         mental_model_refresh_call_defaults = _op_defaults("mental_model_refresh_", fallback=reflect_call_defaults)
         # Refresh never inherits reflect's timeout. Reflect's is sized for a caller
         # holding a request open (30s by default); a refresh runs in the background,
@@ -3018,6 +3024,7 @@ class MemoryEngine(MemoryEngineInterface):
         mental_model_refresh_call_defaults = replace(
             mental_model_refresh_call_defaults,
             timeout=config.mental_model_refresh_llm_timeout or config.llm_timeout,
+            stream=bool(config.mental_model_refresh_llm_stream),
         )
         refresh_timeout_differs = mental_model_refresh_call_defaults.timeout != reflect_call_defaults.timeout
 

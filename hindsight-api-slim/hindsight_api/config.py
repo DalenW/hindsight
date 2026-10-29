@@ -502,6 +502,7 @@ ENV_CONSOLIDATION_LLM_LITELLMROUTER_CONFIG = "HINDSIGHT_API_CONSOLIDATION_LLM_LI
 ENV_CONSOLIDATION_LLM_REASONING_EFFORT = "HINDSIGHT_API_CONSOLIDATION_LLM_REASONING_EFFORT"
 ENV_CONSOLIDATION_LLM_EXTRA_BODY = "HINDSIGHT_API_CONSOLIDATION_LLM_EXTRA_BODY"
 ENV_CONSOLIDATION_LLM_CACHE_AFFINITY = "HINDSIGHT_API_CONSOLIDATION_LLM_CACHE_AFFINITY"
+ENV_CONSOLIDATION_LLM_STREAM = "HINDSIGHT_API_CONSOLIDATION_LLM_STREAM"
 
 # Automatic mental-model refresh runs the reflect pipeline in the background, so it
 # shares REFLECT_LLM_* by default. This group lets it diverge: on a single-GPU
@@ -522,6 +523,7 @@ ENV_MENTAL_MODEL_REFRESH_LLM_LITELLMROUTER_CONFIG = "HINDSIGHT_API_MENTAL_MODEL_
 ENV_MENTAL_MODEL_REFRESH_LLM_REASONING_EFFORT = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_REASONING_EFFORT"
 ENV_MENTAL_MODEL_REFRESH_LLM_EXTRA_BODY = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_EXTRA_BODY"
 ENV_MENTAL_MODEL_REFRESH_LLM_CACHE_AFFINITY = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_CACHE_AFFINITY"
+ENV_MENTAL_MODEL_REFRESH_LLM_STREAM = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_STREAM"
 
 ENV_EMBEDDINGS_PROVIDER = "HINDSIGHT_API_EMBEDDINGS_PROVIDER"
 # Provider-agnostic asymmetric prefixes: applied client-side by every provider that
@@ -2659,6 +2661,17 @@ def _env_float(env_var: str) -> float | None:
     return float(raw) if raw else None
 
 
+def _env_bool(env_var: str) -> bool | None:
+    """An optional boolean setting, or None when the variable is unset or empty.
+
+    None rather than False keeps "unset" distinguishable, which a group such as
+    MENTAL_MODEL_REFRESH_LLM_* relies on to tell whether it was configured at all.
+    """
+    if not os.getenv(env_var):
+        return None
+    return _parse_boolean_env(env_var, default=False)
+
+
 def _env_default_model(provider_env: str) -> str | None:
     """The provider's default model, or None when no provider is configured.
 
@@ -3481,6 +3494,8 @@ class HindsightConfig:
     consolidation_llm_reasoning_effort: str | None
     consolidation_llm_extra_body: dict | None
     consolidation_llm_cache_affinity: str | None
+    # Stream chat completions (OpenAI-compatible providers); None means unstreamed.
+    consolidation_llm_stream: bool | None
 
     # Automatic mental-model refresh. Every field is None unless its own
     # HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_* var is set; unset means the refresh
@@ -3498,6 +3513,7 @@ class HindsightConfig:
     mental_model_refresh_llm_reasoning_effort: str | None
     mental_model_refresh_llm_extra_body: dict | None
     mental_model_refresh_llm_cache_affinity: str | None
+    mental_model_refresh_llm_stream: bool | None
 
     # Embeddings
     embeddings_provider: str
@@ -4760,6 +4776,7 @@ class HindsightConfig:
             consolidation_llm_reasoning_effort=os.getenv(ENV_CONSOLIDATION_LLM_REASONING_EFFORT) or None,
             consolidation_llm_extra_body=json.loads(os.getenv(ENV_CONSOLIDATION_LLM_EXTRA_BODY, "null")),
             consolidation_llm_cache_affinity=os.getenv(ENV_CONSOLIDATION_LLM_CACHE_AFFINITY) or None,
+            consolidation_llm_stream=_env_bool(ENV_CONSOLIDATION_LLM_STREAM),
             mental_model_refresh_llm_provider=os.getenv(ENV_MENTAL_MODEL_REFRESH_LLM_PROVIDER) or None,
             mental_model_refresh_llm_api_key=os.getenv(ENV_MENTAL_MODEL_REFRESH_LLM_API_KEY) or None,
             mental_model_refresh_llm_model=os.getenv(ENV_MENTAL_MODEL_REFRESH_LLM_MODEL)
@@ -4776,6 +4793,7 @@ class HindsightConfig:
             mental_model_refresh_llm_reasoning_effort=os.getenv(ENV_MENTAL_MODEL_REFRESH_LLM_REASONING_EFFORT) or None,
             mental_model_refresh_llm_extra_body=json.loads(os.getenv(ENV_MENTAL_MODEL_REFRESH_LLM_EXTRA_BODY, "null")),
             mental_model_refresh_llm_cache_affinity=os.getenv(ENV_MENTAL_MODEL_REFRESH_LLM_CACHE_AFFINITY) or None,
+            mental_model_refresh_llm_stream=_env_bool(ENV_MENTAL_MODEL_REFRESH_LLM_STREAM),
             # Multi-LLM chains (indexed members + routing strategy)
             llm_members=_parse_llm_members(""),
             llm_strategy=_parse_llm_strategy(os.getenv(ENV_LLM_STRATEGY)),
